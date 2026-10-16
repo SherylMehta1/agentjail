@@ -10,6 +10,6 @@ A gateway that limits what an LLM agent can do with its tools, tested against pr
 
 ## Run it
 1. `pip install python-dotenv google-genai`
-2. Copy `.env.example` to `.env` and add your Gemini API key
+2. Create `.env` and add your Gemini API key
 3. `python agent.py "List my notes."`
 4. `python attack_test.py "A: SYSTEM NOTE"`
