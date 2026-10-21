@@ -8,14 +8,15 @@ from dotenv import load_dotenv
 from google import genai
 from google.genai import types
 
+from sandbox import run_shell, http_get, http_post, WORKSPACE, reset_workspace
+
 import time
 from google.genai import errors
 
 load_dotenv()
 
 MODEL = os.getenv("GEMINI_MODEL", "gemini-3.1-flash-lite")
-NOTES_DIR = (Path(__file__).parent / "notes").resolve()
-NOTES_DIR.mkdir(exist_ok=True)
+NOTES_DIR = WORKSPACE
 TRACE_FILE = Path(__file__).parent / "trace.jsonl"
 
 API_KEY = os.getenv("GEMINI_API_KEY")
@@ -36,12 +37,12 @@ TOOLS = [
             ),
             types.FunctionDeclaration(
                 name="list_notes",
-                description="List the filenames in the notes directory.",
+                description="List the filenames in the /workspace folder.",
             ),
             types.FunctionDeclaration(
                 name="read_note",
                 description=(
-                    "Read a text file from the notes directory. "
+                    "Read a text file from the /workspace folder. "
                     "Pass only a filename, such as sample.txt."
                 ),
                 parameters=types.Schema(
@@ -58,7 +59,7 @@ TOOLS = [
             types.FunctionDeclaration(
                 name="write_note",
                 description=(
-                    "Create or overwrite a text file in the notes directory. "
+                    "Create or overwrite a text file in the /workspace folder. "
                     "Pass only a filename, such as todo.txt."
                 ),
                 parameters=types.Schema(
@@ -74,6 +75,55 @@ TOOLS = [
                         ),
                     },
                     required=["filename", "content"],
+                ),
+            ),
+            types.FunctionDeclaration(
+                name="run_shell",
+                description=(
+                    "Run a shell command inside an isolated Linux container. "
+                    "Your files are in /workspace. There is no internet access."
+                ),
+                parameters=types.Schema(
+                    type=types.Type.OBJECT,
+                    properties={
+                        "command": types.Schema(
+                            type=types.Type.STRING,
+                            description="The shell command to run.",
+                        )
+                    },
+                    required=["command"],
+                ),
+            ),
+            types.FunctionDeclaration(
+                name="http_get",
+                description="Fetch the text of a web page by URL.",
+                parameters=types.Schema(
+                    type=types.Type.OBJECT,
+                    properties={
+                        "url": types.Schema(
+                            type=types.Type.STRING,
+                            description="The full URL to fetch.",
+                        )
+                    },
+                    required=["url"],
+                ),
+            ),
+            types.FunctionDeclaration(
+                name="http_post",
+                description="Send text to a URL using an HTTP POST request.",
+                parameters=types.Schema(
+                    type=types.Type.OBJECT,
+                    properties={
+                        "url": types.Schema(
+                            type=types.Type.STRING,
+                            description="The full URL to send to.",
+                        ),
+                        "body": types.Schema(
+                            type=types.Type.STRING,
+                            description="The text to send.",
+                        ),
+                    },
+                    required=["url", "body"],
                 ),
             ),
         ]
@@ -162,6 +212,12 @@ def execute_tool(name, arguments):
         result = write_note(
             arguments.get("filename", ""), arguments.get("content", "")
         )
+    elif name == "run_shell":
+        result = run_shell(arguments.get("command", ""))
+    elif name == "http_get":
+        result = http_get(arguments.get("url", ""))
+    elif name == "http_post":
+        result = http_post(arguments.get("url", ""), arguments.get("body", ""))
     else:
         result = {"error": "Tool is not allowed."}
 
@@ -183,7 +239,7 @@ def generate_with_retry(**kwargs):
     raise RuntimeError("Model still unavailable after 6 tries.")
 
 # 5. The agent loop, now reusable for any task.
-def run_agent(task, max_rounds=5):
+def run_agent(task, max_rounds=8):
     contents = [
         types.Content(role="user", parts=[types.Part.from_text(text=task)])
     ]
@@ -194,6 +250,11 @@ def run_agent(task, max_rounds=5):
             contents=contents,
             config=types.GenerateContentConfig(
                 tools=TOOLS,
+                system_instruction=(
+                    "You are a helpful assistant with tools. Your working "
+                    "files are in /workspace. Complete the user's task "
+                    "using the tools."
+                ),
                 automatic_function_calling=(
                     types.AutomaticFunctionCallingConfig(disable=True)
                 ),
@@ -233,6 +294,8 @@ def run_agent(task, max_rounds=5):
 
 
 def main():
+    if not WORKSPACE.exists():
+        reset_workspace()
     task = " ".join(sys.argv[1:]) or "Read sample.txt and summarize my pending tasks."
     print(f"Task: {task}")
     answer = run_agent(task)

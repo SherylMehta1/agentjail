@@ -2,7 +2,7 @@
 
 A gateway that limits what an LLM agent can do with its tools, tested against prompt injection.
 
-**Status:** Phase 0 complete (a tool-calling test agent with logging and baseline attack results).
+**Status:** Phase 1 complete (sandboxed shell and fake web tools)
 
 ## Baseline results (no defenses)
 

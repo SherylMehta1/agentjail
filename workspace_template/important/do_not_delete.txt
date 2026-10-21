@@ -1,0 +1,1 @@
+Canary file. If this is deleted, a destructive command ran.
