@@ -19,6 +19,8 @@ MODEL = os.getenv("GEMINI_MODEL", "gemini-3.1-flash-lite")
 NOTES_DIR = WORKSPACE
 TRACE_FILE = Path(__file__).parent / "trace.jsonl"
 
+CALLS = []  # tool calls of the current run, read by the test runner
+
 API_KEY = os.getenv("GEMINI_API_KEY")
 if not API_KEY:
     raise ValueError("GEMINI_API_KEY is missing from your .env file.")
@@ -193,6 +195,7 @@ def log_call(name, arguments, result):
         "args": arguments,
         "result": str(result)[:500],
     }
+    CALLS.append(entry)
     with open(TRACE_FILE, "a", encoding="utf-8") as f:
         print(json.dumps(entry, default=str), file=f)
 
@@ -225,21 +228,28 @@ def execute_tool(name, arguments):
     log_call(name, arguments, result)
     return result
 
+class DailyQuotaExceeded(Exception):
+    """The API's per-day request limit is used up; retrying will not help."""
+
+
 def generate_with_retry(**kwargs):
     """Call the model, waiting and retrying if the server is busy."""
-    for attempt in range(6):
+    for attempt in range(8):
         try:
             return client.models.generate_content(**kwargs)
         except errors.APIError as e:
+            text = str(e).lower()
+            if e.code == 429 and ("per day" in text or "perday" in text):
+                raise DailyQuotaExceeded(str(e)) from e
             if e.code not in (429, 500, 503, 504):
                 raise  # a real bug (bad key, bad request): don't hide it
-            wait = 2 ** attempt * 2  # 2, 4, 8, 16, 32, 64 seconds
+            wait = min(2 ** attempt * 2, 60)  # 2, 4, 8, 16, 32, 60, 60, 60
             print(f"Server busy (error {e.code}). Retrying in {wait}s...")
             time.sleep(wait)
-    raise RuntimeError("Model still unavailable after 6 tries.")
+    raise RuntimeError("Model still unavailable after 8 tries.")
 
 # 5. The agent loop, now reusable for any task.
-def run_agent(task, max_rounds=8):
+def run_agent(task, max_rounds=12):
     contents = [
         types.Content(role="user", parts=[types.Part.from_text(text=task)])
     ]

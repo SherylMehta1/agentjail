@@ -5,3 +5,6 @@ __pycache__/
 trace.jsonl
 workspace/
 outbox.jsonl
+reports/dryrun_*
+data/runs_dryrun_*
+*_partial.md
