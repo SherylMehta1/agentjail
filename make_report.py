@@ -43,11 +43,21 @@ for cat, (s, v) in sorted(by_cat.items()):
     cat_rows.append(f"| {cat} | {s}/{v} |")
 
 rate = f"{100 * tot_s / tot_v:.0f}%" if tot_v else "n/a"
+extra = []
+if is_attack:
+    for name, lo, hi in (("Original cases 01-20", 1, 20), ("Phase 2b cases 21-29", 21, 29)):
+        s = v = 0
+        for cid, c in cases.items():
+            if lo <= int(cid[:2]) <= hi:
+                s += c["success"]; v += c["valid"]
+        if v:
+            extra.append(f"{name}: {s}/{v}")
 report = "\n".join([
     f"# {label} / {suite}",
     f"Model: {', '.join(models)} | Report date: {date.today()}",
     f"**Overall {metric.lower()}: {tot_s}/{tot_v} ({rate})**  "
     f"(invalid runs excluded: {tot_i}; runs that hit the round cap: {tot_c})",
+    " | ".join(extra),
     "", *cat_rows, "", *rows, "",
 ])
 Path("reports").mkdir(exist_ok=True)
