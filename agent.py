@@ -13,6 +13,9 @@ from sandbox import run_shell, http_get, http_post, WORKSPACE, reset_workspace
 import time
 from google.genai import errors
 
+from gateway.core import Gateway
+from gateway.policy import load_policy
+
 load_dotenv()
 
 MODEL = os.getenv("GEMINI_MODEL", "gemini-3.1-flash-lite")
@@ -200,33 +203,6 @@ def log_call(name, arguments, result):
         print(json.dumps(entry, default=str), file=f)
 
 
-# 4. Run only registered tools.
-def execute_tool(name, arguments):
-    print(f"\nRequested tool: {name}")
-    print(f"Arguments: {arguments}")
-
-    if name == "get_time":
-        result = get_time()
-    elif name == "list_notes":
-        result = list_notes()
-    elif name == "read_note":
-        result = read_note(arguments.get("filename", ""))
-    elif name == "write_note":
-        result = write_note(
-            arguments.get("filename", ""), arguments.get("content", "")
-        )
-    elif name == "run_shell":
-        result = run_shell(arguments.get("command", ""))
-    elif name == "http_get":
-        result = http_get(arguments.get("url", ""))
-    elif name == "http_post":
-        result = http_post(arguments.get("url", ""), arguments.get("body", ""))
-    else:
-        result = {"error": "Tool is not allowed."}
-
-    print(f"Tool result: {result}")
-    log_call(name, arguments, result)
-    return result
 
 class DailyQuotaExceeded(Exception):
     """The API's per-day request limit is used up; retrying will not help."""
@@ -247,6 +223,56 @@ def generate_with_retry(**kwargs):
             print(f"Server busy (error {e.code}). Retrying in {wait}s...")
             time.sleep(wait)
     raise RuntimeError("Model still unavailable after 8 tries.")
+
+TOOL_FUNCS = {
+    "get_time": get_time,
+    "list_notes": list_notes,
+    "read_note": read_note,
+    "write_note": write_note,
+    "run_shell": run_shell,
+    "http_get": http_get,
+    "http_post": http_post,
+}
+
+GATEWAY = None  # None = undefended baseline
+
+
+def configure_gateway(policy_path, enforce=True):
+    """Route every tool call through AgentJail, or pass None for no defense."""
+    global GATEWAY
+    GATEWAY = None if policy_path is None else Gateway(
+        load_policy(policy_path), TOOL_FUNCS, enforce=enforce)
+
+
+def run_direct(name, arguments):
+    """The undefended path: exactly what the baseline did."""
+    if name == "get_time":
+        return get_time()
+    if name == "list_notes":
+        return list_notes()
+    if name == "read_note":
+        return read_note(arguments.get("filename", ""))
+    if name == "write_note":
+        return write_note(arguments.get("filename", ""), arguments.get("content", ""))
+    if name == "run_shell":
+        return run_shell(arguments.get("command", ""))
+    if name == "http_get":
+        return http_get(arguments.get("url", ""))
+    if name == "http_post":
+        return http_post(arguments.get("url", ""), arguments.get("body", ""))
+    return {"error": "Tool is not allowed."}
+
+# 4. Run only registered tools.
+def execute_tool(name, arguments):
+    print(f"\nRequested tool: {name}")
+    print(f"Arguments: {arguments}")
+    if GATEWAY is not None:
+        result = GATEWAY.handle(name, arguments)
+    else:
+        result = run_direct(name, arguments)
+    print(f"Tool result: {result}")
+    log_call(name, arguments, result)
+    return result
 
 # 5. The agent loop, now reusable for any task.
 def run_agent(task, max_rounds=12):

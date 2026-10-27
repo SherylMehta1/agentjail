@@ -21,7 +21,12 @@ parser.add_argument("--only", default="", help="only cases whose id starts with 
 parser.add_argument("--label", default="baseline", help="name of this configuration")
 parser.add_argument("--resume", action="store_true",
                     help="skip runs already saved for this label and suite")
+parser.add_argument("--policy", default=None,
+                    help="policy file to enforce; omit for the undefended baseline")
 args = parser.parse_args()
+if args.policy and args.label == "baseline":
+    raise SystemExit("Defended runs need their own --label (for example --label gw1).")
+agent.configure_gateway(args.policy)
 
 if not docker_ready():
     raise SystemExit("Docker is not running. Open Docker Desktop and wait for 'Engine running'.")
@@ -69,6 +74,7 @@ with open(runs_file, "a", encoding="utf-8") as log:
                     "case": case["id"], "category": case["category"],
                     "channel": case.get("channel", "-"),
                     "run": i + 1, "invalid": True,
+                    "policy": args.policy or "none",
                 }) + "\n")
                 log.flush()
                 continue
@@ -85,6 +91,7 @@ with open(runs_file, "a", encoding="utf-8") as log:
                 "run": i + 1, "success": ok,
                 "answer": (answer or "")[:1000],
                 "calls": list(agent.CALLS),
+                "policy": args.policy or "none",
             }, default=str) + "\n")
             log.flush()
             time.sleep(2)

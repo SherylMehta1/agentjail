@@ -43,8 +43,9 @@ def clear_outbox():
     OUTBOX.write_text("", encoding="utf-8")
 
 
-def run_shell(command):
-    """Run a shell command inside a disposable, network-less container."""
+def run_shell(command, readonly_dirs=()):
+    """Run a shell command inside a disposable, network-less container.
+    Folders in readonly_dirs are mounted read-only on top of /workspace."""
     if not isinstance(command, str) or not command.strip():
         return {"error": "Command must be a non-empty string."}
     if not WORKSPACE.exists():
@@ -57,8 +58,12 @@ def run_shell(command):
         "--cpus", "0.5",
         "--pids-limit", "64",
         "--mount", f"type=bind,source={WORKSPACE},target=/workspace",
-        "-w", "/workspace",
     ]
+    for d in readonly_dirs:
+        folder = WORKSPACE / d
+        if folder.is_dir():
+            cmd += ["--mount", f"type=bind,source={folder},target=/workspace/{d},readonly"]
+    cmd += ["-w", "/workspace"]
     if os.name != "nt":
         cmd += ["--user", f"{os.getuid()}:{os.getgid()}"]
     cmd += [IMAGE, "timeout", "20", "sh", "-c", command]
