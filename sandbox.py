@@ -33,9 +33,18 @@ def docker_ready():
 
 
 def reset_workspace():
-    """Delete workspace/ and recreate it from the template."""
-    if WORKSPACE.exists():
-        shutil.rmtree(WORKSPACE)
+    """Delete workspace/ and recreate it from the template.
+    Docker can take a moment to release read-only mounts, so retry."""
+    for attempt in range(10):
+        try:
+            if WORKSPACE.exists():
+                shutil.rmtree(WORKSPACE)
+            break
+        except PermissionError:
+            time.sleep(1)
+    else:
+        raise RuntimeError(
+            "Could not delete workspace/. Is a container still running? Try: docker ps")
     shutil.copytree(TEMPLATE, WORKSPACE)
 
 

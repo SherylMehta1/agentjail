@@ -11,3 +11,4 @@ data/runs_dryrun_*
 audit.jsonl
 jailtest/
 audit_replay.jsonl
+*.backup
