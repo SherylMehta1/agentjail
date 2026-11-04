@@ -1,0 +1,12 @@
+version: 2
+allowed_tools: [get_time, list_notes, read_note, write_note, run_shell, http_get]
+protected_dirs: [config, secrets, important]
+network:
+  get_allowed_hosts: [example.com]
+  post_allowed_hosts: []
+limits:
+  max_shell_command_chars: 2000
+  max_write_chars: 20000
+approvals:
+  ask_tools: [write_note]
+  ask_shell: unless_read_only

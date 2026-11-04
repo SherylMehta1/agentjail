@@ -3,9 +3,8 @@ from datetime import datetime
 from pathlib import Path
 from urllib.parse import urlparse
 
-from gateway.policy import host_allowed, host_of
+from gateway.policy import host_allowed, host_of, is_plain_read
 
-# Every tool, with the exact arguments it takes (all required, no extras).
 ARG_SPECS = {
     "get_time": {},
     "list_notes": {},
@@ -18,21 +17,43 @@ ARG_SPECS = {
 
 
 class Gateway:
-    def __init__(self, policy, tools, audit_path="audit.jsonl", enforce=True):
+    def __init__(self, policy, tools, audit_path="audit.jsonl", enforce=True, approver=None):
         self.policy = policy
-        self.tools = tools          # tool name -> function
+        self.tools = tools
         self.audit_path = Path(audit_path)
-        self.enforce = enforce      # False = log decisions but never block (for ablations)
+        self.enforce = enforce
+        self.approver = approver
+        self.session = {}
+        self.start_session("")
+
+    def start_session(self, task):
+        """Call once per user task: resets everything remembered between calls."""
+        self.session = {"task": task, "asks": 0, "approved": 0, "refused": 0}
+
+    def needs_approver(self):
+        ap = self.policy.approvals
+        return bool(ap.ask_tools) or ap.ask_shell != "never"
 
     def handle(self, name, args):
         """The single checkpoint every tool call passes through."""
         args = dict(args or {})
-        decision, reason = self._decide(name, args)          # steps 1-4
+        decision, reason = self._decide(name, args)              # steps 1-4
+        asked, approved = False, None
+        if decision == "ask":
+            asked = True
+            self.session["asks"] += 1
+            if self.enforce:
+                approved, note = self._ask_human(name, args)
+                self.session["approved" if approved else "refused"] += 1
+                decision = "allow" if approved else "deny"
+                reason = f"human approval: {note}"
+            else:
+                decision, reason = "allow", f"would ask ({reason}); log-only mode"
         if decision == "deny" and self.enforce:
             result = {"error": f"Blocked by AgentJail: {reason}"}
         else:
-            result = self._execute(name, args)               # step 5
-        self._audit(name, args, decision, reason, result)    # step 7
+            result = self._execute(name, args)                   # step 5
+        self._audit(name, args, decision, reason, result, asked, approved)  # step 7
         return result
 
     # ---- steps 1-4: decide ----
@@ -63,8 +84,20 @@ class Gateway:
                 return "deny", f"host '{host_of(url)}' is not on the allowlist for {name}"
 
         # Step 3 (taint check) arrives in Phase 5.
-        # Step 4 (human approval) arrives in Phase 4.
+
+        # Step 4: does a human need to approve this?
+        ap = self.policy.approvals
+        if name in ap.ask_tools:
+            return "ask", f"'{name}' requires approval"
+        if name == "run_shell" and ap.ask_shell != "never":
+            if ap.ask_shell == "always" or not is_plain_read(args["command"]):
+                return "ask", "this shell command is not a plain read and requires approval"
         return "allow", "ok"
+
+    def _ask_human(self, name, args):
+        if self.approver is None:
+            return False, "no approver configured (fail closed)"
+        return self.approver.decide(name, args, self.session["task"])
 
     @staticmethod
     def _check_args(spec, args):
@@ -86,7 +119,6 @@ class Gateway:
             return {"error": "Tool is not available."}
         try:
             if name == "run_shell":
-                # Protected folders become read-only inside the container.
                 readonly = self.policy.protected_dirs if self.enforce else []
                 return fn(command=args["command"], readonly_dirs=readonly)
             return fn(**args)
@@ -94,16 +126,19 @@ class Gateway:
             return {"error": f"Tool failed: {e}"}
 
     # ---- step 7: audit log ----
-    def _audit(self, name, args, decision, reason, result):
+    def _audit(self, name, args, decision, reason, result, asked=False, approved=None):
         entry = {
             "time": datetime.now().astimezone().isoformat(),
             "tool": name,
             "args": {k: str(v)[:300] for k, v in args.items()},
             "decision": decision,
             "reason": reason,
+            "asked": asked,
+            "approved": approved,
+            "approver": getattr(self.approver, "name", None),
             "enforced": self.enforce,
-            "result": str(result)[:300],
             "sandbox_denied": "Read-only file system" in str(result),
+            "result": str(result)[:300],
         }
         with open(self.audit_path, "a", encoding="utf-8") as f:
             print(json.dumps(entry), file=f)

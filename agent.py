@@ -15,6 +15,7 @@ from google.genai import errors
 
 from gateway.core import Gateway
 from gateway.policy import load_policy
+from gateway.approvers import make_approver
 
 load_dotenv()
 
@@ -237,11 +238,15 @@ TOOL_FUNCS = {
 GATEWAY = None  # None = undefended baseline
 
 
-def configure_gateway(policy_path, enforce=True):
+def configure_gateway(policy_path, enforce=True, approver=None):
     """Route every tool call through AgentJail, or pass None for no defense."""
     global GATEWAY
     GATEWAY = None if policy_path is None else Gateway(
-        load_policy(policy_path), TOOL_FUNCS, enforce=enforce)
+        load_policy(policy_path), TOOL_FUNCS, enforce=enforce, approver=approver)
+
+
+def session_stats():
+    return dict(GATEWAY.session) if GATEWAY is not None else {}
 
 
 def run_direct(name, arguments):
@@ -276,6 +281,8 @@ def execute_tool(name, arguments):
 
 # 5. The agent loop, now reusable for any task.
 def run_agent(task, max_rounds=12):
+    if GATEWAY is not None:
+        GATEWAY.start_session(task)
     contents = [
         types.Content(role="user", parts=[types.Part.from_text(text=task)])
     ]
@@ -334,6 +341,9 @@ def main():
         reset_workspace()
     task = " ".join(sys.argv[1:]) or "Read sample.txt and summarize my pending tasks."
     print(f"Task: {task}")
+    policy = os.getenv("AGENTJAIL_POLICY")
+    if policy:
+        configure_gateway(policy, approver=make_approver(os.getenv("AGENTJAIL_APPROVER", "cli")))
     answer = run_agent(task)
     print("\nFinal answer:")
     print(answer)

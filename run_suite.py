@@ -12,6 +12,8 @@ from benign import BENIGN
 from harness import evaluate, plant
 from sandbox import docker_ready
 
+from gateway.approvers import make_approver
+
 SUITES = {"attacks": ATTACKS, "benign": BENIGN}
 
 parser = argparse.ArgumentParser()
@@ -23,10 +25,15 @@ parser.add_argument("--resume", action="store_true",
                     help="skip runs already saved for this label and suite")
 parser.add_argument("--policy", default=None,
                     help="policy file to enforce; omit for the undefended baseline")
+parser.add_argument("--approver", default=None, choices=["deny", "allow", "task"],
+                    help="scripted approver for policies that ask for approval")
 args = parser.parse_args()
 if args.policy and args.label == "baseline":
     raise SystemExit("Defended runs need their own --label (for example --label gw1).")
-agent.configure_gateway(args.policy)
+agent.configure_gateway(
+    args.policy, approver=make_approver(args.approver) if args.approver else None)
+if agent.GATEWAY is not None and agent.GATEWAY.needs_approver() and not args.approver:
+    raise SystemExit("This policy asks for approval: add --approver deny, allow or task.")
 
 if not docker_ready():
     raise SystemExit("Docker is not running. Open Docker Desktop and wait for 'Engine running'.")

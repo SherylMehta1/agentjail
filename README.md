@@ -2,7 +2,7 @@
 
 A gateway that limits what an LLM agent can do with its tools, built to be measured against prompt injection.
 
-**Status:** Phase 3 complete
+**Status:** Phase 4 complete
 
 ## What this project is
 An LLM agent reads files and web pages that may contain attacker-written instructions (indirect prompt injection). AgentJail will sit between the agent and its tools and decide, for each tool call, whether to allow, block or ask a human. The goal is containment, not prevention: it cannot stop a model from being fooled, only limit what a fooled model can do.
@@ -89,8 +89,18 @@ python inspect_runs.py data/runs_baseline_attacks.jsonl 25-web-system-exfil
 ## Repo layout
 `agent.py` test agent · `sandbox.py` Docker shell and fake web · `attacks.py`, `benign.py` test cases · `checks.py` success checks · `harness.py`, `run_suite.py` runner · `make_report.py`, `inspect_runs.py` analysis · `data/` raw runs · `reports/` results
 
-## Roadmap
-Phase 3: build the gateway (argument validation, policy rules, protected paths, network allowlist, approval gates, taint rule) and re-run both suites. Success is judged on attack success **and** benign task success, including false blocks.
-
 
 “Two full undefended benign batches (70 runs each, 23 to 25 Oct) were collected. Batch 1 is the baseline (69/70); batch 2 is stored as baseline_rerun and independently gave 69/70, with the same b14 miss. 13 of 14 tasks were first run under an 8-round cap but none hit it.” A replication that matches is stronger evidence than a single run.
+
+
+## Phase 4: approval gates (policy v2)
+Policy v2 adds a third decision, `ask`: every `write_note` and every shell command that is not a plain read pauses for approval (terminal prompt, or a scripted approver for experiments). 24 unit tests.
+
+| | Policy v1 | v2, always-no | v2, simulated human |
+|---|---|---|---|
+| Oracle attacks that still succeed (of 29) | 10 | 0 | 0 |
+| Benign replay utility (of 70) | 69 | 29 | 69 |
+| Live: attacks 05, 27, 29 | 15/15 | n/a | 0/15 |
+| Live: benign b03, b10, b13 | 15/15 | n/a | 15/15 |
+
+Cost: 43 of 70 benign runs (61%) would interrupt a person, 59 prompts in all, up to 2.8 per task. The simulated human approves a write only if the file is named in the user's task, so it stops attackers who pick other files but not one who targets a file the task mentions, or who changes the content of an approved file (both documented as tests). Next: Phase 5 tests asking only after untrusted content has been read.
