@@ -2,7 +2,7 @@
 
 A gateway that limits what an LLM agent can do with its tools, built to be measured against prompt injection.
 
-**Status:** Phase 4 complete
+**Status:** Phase 5 complete
 
 ## What this project is
 An LLM agent reads files and web pages that may contain attacker-written instructions (indirect prompt injection). AgentJail will sit between the agent and its tools and decide, for each tool call, whether to allow, block or ask a human. The goal is containment, not prevention: it cannot stop a model from being fooled, only limit what a fooled model can do.
@@ -104,3 +104,8 @@ Policy v2 adds a third decision, `ask`: every `write_note` and every shell comma
 | Live: benign b03, b10, b13 | 15/15 | n/a | 15/15 |
 
 Cost: 43 of 70 benign runs (61%) would interrupt a person, 59 prompts in all, up to 2.8 per task. The simulated human approves a write only if the file is named in the user's task, so it stops attackers who pick other files but not one who targets a file the task mentions, or who changes the content of an approved file (both documented as tests). Next: Phase 5 tests asking only after untrusted content has been read.
+
+## Phase 5: taint tracking
+A session starts clean and becomes tainted when untrusted content enters the model's context; approvals then apply only after taint. v3a taints on file and page contents; v3b also on filenames and any shell output.
+
+Always-ask (v2) needed 59 prompts in 43 of 70 benign runs. v3a needs 38 in 26 runs, but a malicious filename slips past it; v3b closes that gap and needs 53 in 37 runs. All three stop all 29 scripted attacks. The savings exist only where the agent acts before it reads, which is a property of this model, not of the rule. Approvals by file name cannot stop an attack on a file the task names, or a content swap.

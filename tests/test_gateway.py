@@ -6,12 +6,91 @@ from gateway.core import Gateway
 from gateway.policy import NetworkPolicy, Policy, load_policy
 
 from gateway.approvers import AllowAll, DenyAll, TaskAware
-from gateway.policy import Approvals, is_plain_read
+from gateway.policy import Approvals, Taint, is_plain_read
 
 ALL = ["get_time", "list_notes", "read_note", "write_note",
        "run_shell", "http_get", "http_post"]
 
+def make_taint(tmp_path, sources=("read_note", "http_get"), readers=("cat",), approver=None):
+    ran = []
+    results = {
+        "read_note": {"content": "some text"},
+        "http_get": {"status": 200, "body": "page"},
+        "list_notes": {"files": ["a.txt"]},
+        "run_shell": {"exit_code": 0, "stdout": "text", "stderr": ""},
+    }
 
+    def make_fake(name):
+        def fake(**args):
+            ran.append((name, args))
+            return results.get(name, {"ok": True})
+        return fake
+
+    policy = Policy(
+        version=3,
+        allowed_tools=ALL[:-1],
+        network=NetworkPolicy(get_allowed_hosts=["example.com"]),
+        approvals=Approvals(ask_tools=["write_note"], ask_shell="unless_read_only",
+                            when="tainted"),
+        taint=Taint(sources=list(sources), shell_content_readers=list(readers)),
+    )
+    gw = Gateway(policy, {n: make_fake(n) for n in ALL},
+                 audit_path=tmp_path / "audit.jsonl", approver=approver)
+    return gw, ran
+
+
+def test_write_is_free_before_taint_and_asked_after(tmp_path):
+    gw, _ = make_taint(tmp_path, approver=DenyAll())
+    assert gw.handle("write_note", {"filename": "a.txt", "content": "x"}) == {"ok": True}
+    gw.handle("read_note", {"filename": "b.txt"})
+    assert gw.session["tainted"] is True
+    assert "Blocked" in gw.handle("write_note", {"filename": "a.txt", "content": "x"})["error"]
+
+
+def test_list_notes_taints_only_when_configured(tmp_path):
+    gw, _ = make_taint(tmp_path, approver=DenyAll())
+    gw.handle("list_notes", {})
+    assert gw.session["tainted"] is False
+    gw2, _ = make_taint(tmp_path, sources=("read_note", "http_get", "list_notes"),
+                        approver=DenyAll())
+    gw2.handle("list_notes", {})
+    assert gw2.session["tainted"] is True
+
+
+def test_shell_content_readers_taint_but_listing_does_not(tmp_path):
+    gw, _ = make_taint(tmp_path, approver=DenyAll())
+    gw.handle("run_shell", {"command": "ls -la /workspace"})
+    assert gw.session["tainted"] is False
+    gw.handle("run_shell", {"command": "cat /workspace/a.txt"})
+    assert gw.session["tainted"] is True
+
+
+def test_blocked_read_does_not_taint(tmp_path):
+    gw, _ = make_taint(tmp_path, approver=DenyAll())
+    gw.handle("http_get", {"url": "https://attacker.example/x"})
+    assert gw.session["tainted"] is False
+
+
+def test_new_session_clears_taint(tmp_path):
+    gw, _ = make_taint(tmp_path, approver=DenyAll())
+    gw.handle("read_note", {"filename": "b.txt"})
+    gw.start_session("next task")
+    assert gw.session["tainted"] is False
+
+
+def test_taint_policies_load():
+    a = load_policy("policies/v3a_taint.yaml")
+    b = load_policy("policies/v3b_taint_strict.yaml")
+    assert a.approvals.when == "tainted" and "list_notes" not in a.taint.sources
+    assert "list_notes" in b.taint.sources
+
+
+def test_when_tainted_needs_a_source(tmp_path):
+    p = tmp_path / "bad.yaml"
+    p.write_text("version: 3\nallowed_tools: [list_notes]\napprovals:\n  when: tainted\n")
+    with pytest.raises(ValueError):
+        load_policy(p)
+        
 def make(tmp_path, enforce=True, approver=None, approvals=None):
     ran = []
 

@@ -21,7 +21,14 @@ class Limits:
 @dataclass
 class Approvals:
     ask_tools: list = field(default_factory=list)
-    ask_shell: str = "never"  # never | unless_read_only | always
+    ask_shell: str = "never"   # never | unless_read_only | always
+    when: str = "always"       # always | tainted
+
+
+@dataclass
+class Taint:
+    sources: list = field(default_factory=list)                # tools whose results taint the session
+    shell_content_readers: list = field(default_factory=list)  # shell commands that print file contents
 
 
 @dataclass
@@ -32,6 +39,7 @@ class Policy:
     network: NetworkPolicy = field(default_factory=NetworkPolicy)
     limits: Limits = field(default_factory=Limits)
     approvals: Approvals = field(default_factory=Approvals)
+    taint: Taint = field(default_factory=Taint)
 
 
 def _only_known_keys(data, known, where):
@@ -45,7 +53,8 @@ def load_policy(path):
     data = yaml.safe_load(Path(path).read_text(encoding="utf-8")) or {}
     _only_known_keys(
         data,
-        ["version", "allowed_tools", "protected_dirs", "network", "limits", "approvals"],
+        ["version", "allowed_tools", "protected_dirs", "network", "limits",
+         "approvals", "taint"],
         "policy",
     )
     for required in ("version", "allowed_tools"):
@@ -57,9 +66,16 @@ def load_policy(path):
     lim = data.get("limits") or {}
     _only_known_keys(lim, ["max_shell_command_chars", "max_write_chars"], "limits")
     appr = data.get("approvals") or {}
-    _only_known_keys(appr, ["ask_tools", "ask_shell"], "approvals")
+    _only_known_keys(appr, ["ask_tools", "ask_shell", "when"], "approvals")
     if appr.get("ask_shell", "never") not in ("never", "unless_read_only", "always"):
         raise ValueError("approvals.ask_shell must be never, unless_read_only or always")
+    if appr.get("when", "always") not in ("always", "tainted"):
+        raise ValueError("approvals.when must be always or tainted")
+    taint = data.get("taint") or {}
+    _only_known_keys(taint, ["sources", "shell_content_readers"], "taint")
+    if appr.get("when") == "tainted" and not (
+            taint.get("sources") or taint.get("shell_content_readers")):
+        raise ValueError("approvals.when is 'tainted' but nothing can taint the session")
 
     protected = list(data.get("protected_dirs") or [])
     for d in protected:
@@ -74,6 +90,7 @@ def load_policy(path):
         network=NetworkPolicy(**net),
         limits=Limits(**lim),
         approvals=Approvals(**appr),
+        taint=Taint(**taint),
     )
 
 

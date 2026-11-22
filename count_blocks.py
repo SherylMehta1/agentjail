@@ -3,8 +3,10 @@ import sys
 from collections import defaultdict
 
 suite = sys.argv[1]
+label = sys.argv[2] if len(sys.argv) > 2 else "gw1"   # new: which set of runs to read
+
 rows = defaultdict(lambda: {"runs": 0, "gateway": 0, "sandbox": 0, "either": 0})
-with open(f"data/runs_gw1_{suite}.jsonl", encoding="utf-8") as f:
+with open(f"data/runs_{label}_{suite}.jsonl", encoding="utf-8") as f:   # changed: uses label
     for line in f:
         r = json.loads(line)
         if r.get("invalid"):

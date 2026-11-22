@@ -2,7 +2,7 @@ import argparse
 from pathlib import Path
 
 import agent
-from attack_traces import TRACES
+from attack_traces import full_trace
 from attacks import ATTACKS
 from gateway.approvers import make_approver
 from gateway.core import Gateway
@@ -29,7 +29,7 @@ for case in ATTACKS:
     plant(case)
     if gateway:
         gateway.start_session(case["task"])
-    for name, call_args in TRACES[case["id"][:2]]:
+    for name, call_args in full_trace(case["id"][:2]):
         if gateway:
             gateway.handle(name, call_args)
         else:

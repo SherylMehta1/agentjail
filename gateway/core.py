@@ -28,7 +28,8 @@ class Gateway:
 
     def start_session(self, task):
         """Call once per user task: resets everything remembered between calls."""
-        self.session = {"task": task, "asks": 0, "approved": 0, "refused": 0}
+        self.session = {"task": task, "asks": 0, "approved": 0, "refused": 0,
+                        "tainted": False, "taint_source": ""}
 
     def needs_approver(self):
         ap = self.policy.approvals
@@ -37,6 +38,7 @@ class Gateway:
     def handle(self, name, args):
         """The single checkpoint every tool call passes through."""
         args = dict(args or {})
+        tainted_before = self.session["tainted"]
         decision, reason = self._decide(name, args)              # steps 1-4
         asked, approved = False, None
         if decision == "ask":
@@ -53,7 +55,9 @@ class Gateway:
             result = {"error": f"Blocked by AgentJail: {reason}"}
         else:
             result = self._execute(name, args)                   # step 5
-        self._audit(name, args, decision, reason, result, asked, approved)  # step 7
+            self._label(name, args, result)                      # step 6
+        self._audit(name, args, decision, reason, result,
+                    asked, approved, tainted_before)             # step 7
         return result
 
     # ---- steps 1-4: decide ----
@@ -83,10 +87,12 @@ class Gateway:
             if not host_allowed(url, allowed):
                 return "deny", f"host '{host_of(url)}' is not on the allowlist for {name}"
 
-        # Step 3 (taint check) arrives in Phase 5.
+        # Step 3: taint. Approval rules only apply once untrusted content was seen.
+        ap = self.policy.approvals
+        if ap.when == "tainted" and not self.session["tainted"]:
+            return "allow", "ok (session not tainted)"
 
         # Step 4: does a human need to approve this?
-        ap = self.policy.approvals
         if name in ap.ask_tools:
             return "ask", f"'{name}' requires approval"
         if name == "run_shell" and ap.ask_shell != "never":
@@ -125,8 +131,34 @@ class Gateway:
         except Exception as e:
             return {"error": f"Tool failed: {e}"}
 
+    # ---- step 6: label the result ----
+    def _label(self, name, args, result):
+        """Mark the session tainted when untrusted content enters it."""
+        if self.session["tainted"] or not isinstance(result, dict) or "error" in result:
+            return
+        t = self.policy.taint
+        if name == "run_shell":
+            words = args.get("command", "").split()
+            counts = name in t.sources or (bool(words) and words[0] in t.shell_content_readers)
+            has_content = bool(result.get("stdout"))
+        elif name == "http_get":
+            counts = name in t.sources
+            has_content = result.get("status") == 200 and bool(result.get("body"))
+        elif name == "read_note":
+            counts = name in t.sources
+            has_content = bool(result.get("content"))
+        elif name == "list_notes":
+            counts = name in t.sources
+            has_content = bool(result.get("files"))
+        else:
+            return
+        if counts and has_content:
+            self.session["tainted"] = True
+            self.session["taint_source"] = name
+
     # ---- step 7: audit log ----
-    def _audit(self, name, args, decision, reason, result, asked=False, approved=None):
+    def _audit(self, name, args, decision, reason, result,
+               asked=False, approved=None, tainted=False):
         entry = {
             "time": datetime.now().astimezone().isoformat(),
             "tool": name,
@@ -136,6 +168,8 @@ class Gateway:
             "asked": asked,
             "approved": approved,
             "approver": getattr(self.approver, "name", None),
+            "tainted": tainted,
+            "taint_source": self.session["taint_source"],
             "enforced": self.enforce,
             "sandbox_denied": "Read-only file system" in str(result),
             "result": str(result)[:300],
