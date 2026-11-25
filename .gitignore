@@ -12,3 +12,5 @@ audit.jsonl
 jailtest/
 audit_replay.jsonl
 *.backup
+audit_ablation.jsonl
+audit_bench.jsonl

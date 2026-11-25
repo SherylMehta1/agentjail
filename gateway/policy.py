@@ -99,8 +99,10 @@ def host_of(url):
 
 
 def host_allowed(url, allowed_hosts):
-    """Exact host match only: example.com.attacker.example does not match."""
-    return host_of(url) in {h.lower() for h in allowed_hosts}
+    """Exact host match only (example.com.attacker.example does not match).
+    A '*' entry allows every host; it exists only so ablations can switch the rule off."""
+    hosts = {h.lower() for h in allowed_hosts}
+    return "*" in hosts or host_of(url) in hosts
 
 
 READ_ONLY_COMMANDS = {"ls", "cat", "wc", "head", "tail", "grep", "pwd", "stat", "du"}

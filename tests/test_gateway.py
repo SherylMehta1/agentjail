@@ -6,7 +6,7 @@ from gateway.core import Gateway
 from gateway.policy import NetworkPolicy, Policy, load_policy
 
 from gateway.approvers import AllowAll, DenyAll, TaskAware
-from gateway.policy import Approvals, Taint, is_plain_read
+from gateway.policy import Approvals, Taint, is_plain_read, host_allowed
 
 ALL = ["get_time", "list_notes", "read_note", "write_note",
        "run_shell", "http_get", "http_post"]
@@ -278,3 +278,10 @@ def test_url_tricks_denied(tmp_path):
 def test_host_case_is_ignored(tmp_path):
     gw, ran = make(tmp_path)
     assert gw.handle("http_get", {"url": "https://EXAMPLE.com/news"}) == {"ok": True}
+
+def test_wildcard_host_is_for_ablations_only():
+    assert host_allowed("https://anything.example/x", ["*"])
+    assert not host_allowed("https://anything.example/x", ["example.com"])
+    for name in ("default", "v2_approvals", "v3a_taint", "v3b_taint_strict"):
+        p = load_policy(f"policies/{name}.yaml")
+        assert "*" not in p.network.get_allowed_hosts + p.network.post_allowed_hosts
