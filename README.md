@@ -2,7 +2,7 @@
 
 A gateway that limits what an LLM agent can do with its tools, built to be measured against prompt injection.
 
-**Status:** Phase 5 complete
+**Status:** Phase 6 complete
 
 ## What this project is
 An LLM agent reads files and web pages that may contain attacker-written instructions (indirect prompt injection). AgentJail will sit between the agent and its tools and decide, for each tool call, whether to allow, block or ask a human. The goal is containment, not prevention: it cannot stop a model from being fooled, only limit what a fooled model can do.
